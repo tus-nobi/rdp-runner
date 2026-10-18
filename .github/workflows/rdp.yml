@@ -15,6 +15,10 @@ on:
         description: 'Ngrok Auth Token'
         required: false
         default: ''
+      ngrok_region:
+        description: 'Ngrok Region'
+        required: false
+        default: 'eu'
 
 jobs:
   rdp-setup:
@@ -106,11 +110,14 @@ jobs:
         run: |
           $tok = "${{ inputs.ngrok_token }}"
           if (-not $tok) { $tok = $env:DEFAULT_NGROK }
+          $reg = "${{ inputs.ngrok_region }}"
+          if (-not $reg -or $reg -eq "gb") { $reg = "eu" }
 
-          # Write ngrok config with explicit IPv4 localhost binding
+          # Write ngrok config with explicit IPv4 localhost binding and region
           @(
             'version: "2"',
             "authtoken: $tok",
+            "region: $reg",
             'tunnels:',
             '  rdp:',
             '    proto: tcp',
