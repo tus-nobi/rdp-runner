@@ -56,8 +56,11 @@ jobs:
           Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "UserAuthentication" -Value 0 -Force
           Set-Service -Name "TermService" -StartupType Automatic
           Start-Service -Name "TermService"
+          
+          # Disable firewall completely for maximum reliability
+          Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False -ErrorAction SilentlyContinue
           netsh advfirewall firewall add rule name="Allow-RDP" dir=in action=allow protocol=TCP localport=3389
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
           New-NetFirewallRule -DisplayName "RDP-3389" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3389 -ErrorAction SilentlyContinue
 
       - name: Create Admin User
@@ -82,19 +85,19 @@ jobs:
 
           Copy-Item .\ngrok.exe C:\Windows\System32\ngrok.exe -Force
 
-          # Write ngrok config
+          # Write ngrok config with explicit IPv4 localhost binding to prevent WinError 10061
           @(
             'version: "2"',
             "authtoken: $tok",
             'tunnels:',
             '  rdp:',
             '    proto: tcp',
-            '    addr: 3389'
+            '    addr: 127.0.0.1:3389'
           ) | Out-File -FilePath "C:\ngrok.yml" -Encoding ascii
 
-          # Start ngrok as background process (compatible with Windows 2022/2025)
+          # Start ngrok as background process with logging
           $ngrokProc = Start-Process -FilePath "C:\Windows\System32\ngrok.exe" `
-            -ArgumentList "start rdp --config C:\ngrok.yml" `
+            -ArgumentList "start rdp --config C:\ngrok.yml --log C:\ngrok.log" `
             -NoNewWindow -PassThru
           Write-Output "[+] Ngrok started with PID: $($ngrokProc.Id)"
 
@@ -115,6 +118,7 @@ jobs:
 
           if (-not $tunnelUrl) {
             Write-Output "::error::Ngrok tunnel could not be established"
+            if (Test-Path "C:\ngrok.log") { Get-Content "C:\ngrok.log" }
             exit 1
           }
 
@@ -146,7 +150,16 @@ jobs:
         shell: pwsh
         run: |
           Write-Output "[+] RDP is now live! Keeping runner alive..."
-          while ($true) { Start-Sleep -Seconds 300 }
+          while ($true) {
+            $p = Get-Process -Name "ngrok" -ErrorAction SilentlyContinue
+            if (-not $p) {
+              Write-Output "[!] Warning: Ngrok process stopped. Restarting ngrok..."
+              Start-Process -FilePath "C:\Windows\System32\ngrok.exe" `
+                -ArgumentList "start rdp --config C:\ngrok.yml --log C:\ngrok.log" `
+                -NoNewWindow
+            }
+            Start-Sleep -Seconds 60
+          }
 
       - name: Cleanup Ngrok
         if: always()
